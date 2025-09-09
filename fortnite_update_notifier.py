@@ -10,7 +10,6 @@ from aiohttp import ClientResponseError, ClientTimeout
 
 NEWS_URL = "https://www.fortnite.com/news?lang=en-US"
 EPIC_STATUS_URL = "https://status.epicgames.com/"
-# Probe a few likely dev-doc slugs each run; newest first
 DEV_DOCS = [
     "https://dev.epicgames.com/documentation/en-us/fortnite/37-10-fortnite-ecosystem-updates-and-release-notes",
     "https://dev.epicgames.com/documentation/en-us/fortnite/37-00-fortnite-ecosystem-updates-and-release-notes",
@@ -19,18 +18,13 @@ DEV_DOCS = [
 
 STATE_PATH = os.getenv("STATE_PATH", "state/fortnite_state.json")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
+FORCE_SEND_ENV = os.getenv("FORCE_SEND", "").lower() == "true"  # optional env trigger
 
 VERSION_RX = re.compile(r"\bv?\s?(\d{2}\.\d{1,2}|\d{2}\-\d{2})\b", re.IGNORECASE)
-
-# ---------------------------
-# HTTP fetch (headers + retry)
-# ---------------------------
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/127.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/127.0.0.0 Safari/537.36"),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Cache-Control": "no-cache",
@@ -50,12 +44,8 @@ async def fetch(session: aiohttp.ClientSession, url: str, *, retries: int = 3) -
         except Exception:
             if i == retries - 1:
                 raise
-            await asyncio.sleep(delay)
-            delay *= 2
+            await asyncio.sleep(delay); delay *= 2
 
-# ---------------------------
-# Parsing helpers
-# ---------------------------
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
@@ -67,68 +57,51 @@ def parse_news_article(html: str) -> Dict:
     soup = BeautifulSoup(html, "html.parser")
     time_tag = soup.find("time")
     published = time_tag.get("datetime") if time_tag and time_tag.get("datetime") else (time_tag.get_text(strip=True) if time_tag else None)
-
     sections: List[Dict] = []
     for h in soup.select("h2, h3"):
         header = _norm(h.get_text(" ", strip=True))
-        if not header:
-            continue
+        if not header: continue
         items: List[str] = []
         for sib in h.find_all_next():
-            if sib == h:
-                continue
-            if sib.name in ("h2", "h3"):
-                break
+            if sib == h: continue
+            if sib.name in ("h2","h3"): break
             if sib.name == "ul":
                 for li in sib.select("li"):
                     t = _norm(li.get_text(" ", strip=True))
-                    if 3 <= len(t) <= 500:
-                        items.append(t)
+                    if 3 <= len(t) <= 500: items.append(t)
             if sib.name == "p":
                 t = _norm(sib.get_text(" ", strip=True))
-                if 10 <= len(t) <= 500:
-                    items.append(t)
-        if items:
-            sections.append({"header": header, "items": items[:10]})
-
+                if 10 <= len(t) <= 500: items.append(t)
+        if items: sections.append({"header": header, "items": items[:10]})
     return {"version": extract_version_from_html(html), "published": published, "sections": sections}
 
 def parse_dev_docs_article(html: str) -> Dict:
     soup = BeautifulSoup(html, "html.parser")
     pub = soup.find(string=re.compile(r"Published\s", re.IGNORECASE))
     published = _norm(pub) if pub else None
-
     sections: List[Dict] = []
     for h in soup.select("h2, h3"):
         header = _norm(h.get_text(" ", strip=True))
-        if not header:
-            continue
+        if not header: continue
         items: List[str] = []
         for sib in h.find_all_next():
-            if sib == h:
-                continue
-            if sib.name in ("h2", "h3"):
-                break
+            if sib == h: continue
+            if sib.name in ("h2","h3"): break
             if sib.name == "ul":
                 for li in sib.select("li"):
                     t = _norm(li.get_text(" ", strip=True))
-                    if 3 <= len(t) <= 500:
-                        items.append(t)
+                    if 3 <= len(t) <= 500: items.append(t)
             if sib.name == "p":
                 t = _norm(sib.get_text(" ", strip=True))
-                if 10 <= len(t) <= 500:
-                    items.append(t)
-        if items:
-            sections.append({"header": header, "items": items[:10]})
-
+                if 10 <= len(t) <= 500: items.append(t)
+        if items: sections.append({"header": header, "items": items[:10]})
     return {"version": extract_version_from_html(html), "published": published, "sections": sections}
 
 def select_top_sections(article: Dict, max_sections: int = 3, max_items_per: int = 3) -> List[str]:
-    priority = ("New", "Weapon", "Gadget", "Map", "Gameplay", "Vehicles", "Improvements", "Fixes", "Creative", "UEFN", "Performance", "Bug")
+    priority = ("New","Weapon","Gadget","Map","Gameplay","Vehicles","Improvements","Fixes","Creative","UEFN","Performance","Bug")
     scored = []
     for sec in article.get("sections", []):
-        score = sum(kw.lower() in sec["header"].lower() for kw in priority)
-        scored.append((score, sec))
+        scored.append((sum(k.lower() in sec["header"].lower() for k in priority), sec))
     scored.sort(key=lambda x: x[0], reverse=True)
     lines: List[str] = []
     for _, sec in (scored[:max_sections] if scored else article.get("sections", [])[:max_sections]):
@@ -137,24 +110,18 @@ def select_top_sections(article: Dict, max_sections: int = 3, max_items_per: int
             lines.append(f"• {it}")
     return lines
 
-# ---------------------------
-# Sources
-# ---------------------------
 async def get_latest_news_article(session: aiohttp.ClientSession) -> Tuple[Optional[str], Optional[Dict]]:
-    """Return (article_url, parsed_dict) or (None, None) if blocked/not found."""
     try:
         html = await fetch(session, NEWS_URL)
     except ClientResponseError as e:
         if e.status == 403:
             return None, None
         raise
-
     soup = BeautifulSoup(html, "html.parser")
     for a in soup.find_all("a"):
         title = (a.get_text(" ", strip=True) or "").lower()
-        if not title:
-            continue
-        if any(k in title for k in ("update", "patch", "release notes", "hotfix", "v")):
+        if not title: continue
+        if any(k in title for k in ("update","patch","release notes","hotfix","v")):
             href = a.get("href", "")
             if href and not href.startswith("http"):
                 href = "https://www.fortnite.com" + href
@@ -185,18 +152,15 @@ async def epic_status_maintenance_time(session: aiohttp.ClientSession) -> Option
     except Exception:
         return None
 
-# ---------------------------
-# Time + state + webhook
-# ---------------------------
 def to_pacific_display(iso_or_utc: Optional[str]) -> str:
     PT = ZoneInfo("America/Los_Angeles")
     if not iso_or_utc:
         return datetime.now(ZoneInfo("UTC")).astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
     try:
         if "UTC" in iso_or_utc:
-            dt = datetime.strptime(iso_or_utc.replace(" UTC", ""), "%b %d, %H:%M").replace(year=datetime.now().year, tzinfo=ZoneInfo("UTC"))
+            dt = datetime.strptime(iso_or_utc.replace(" UTC",""), "%b %d, %H:%M").replace(year=datetime.now().year, tzinfo=ZoneInfo("UTC"))
         else:
-            dt = datetime.fromisoformat(iso_or_utc.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(iso_or_utc.replace("Z","+00:00"))
         return dt.astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
     except Exception:
         return datetime.now(ZoneInfo("UTC")).astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
@@ -215,12 +179,14 @@ def save_state(state: Dict):
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
-def build_embed(version: str, time_pt: str, lines: List[str], links: List[str]) -> Dict:
+def build_embed(version: str, time_pt: str, lines: List[str], links: List[str], forced: bool) -> Dict:
+    desc = "\n".join(lines[:12]) or "See full notes below."
+    title = f"🔔 Fortnite Update {version}" + (" (forced)" if forced else "")
     return {
         "username": "Fortnite Updates",
         "embeds": [{
-            "title": f"🔔 Fortnite Update {version}",
-            "description": "\n".join(lines[:12]) or "See full notes below.",
+            "title": title,
+            "description": desc,
             "color": 0x5865F2,
             "fields": [
                 {"name": "Time", "value": time_pt, "inline": True},
@@ -229,34 +195,30 @@ def build_embed(version: str, time_pt: str, lines: List[str], links: List[str]) 
         }]
     }
 
-# ---------------------------
-# Main
-# ---------------------------
 async def main():
+    # Optional CLI flag: --force
+    FORCE_SEND = FORCE_SEND_ENV or ("--force" in os.sys.argv)
+
     if not DISCORD_WEBHOOK:
         raise SystemExit("Set DISCORD_WEBHOOK_URL env var first.")
 
     state = load_state()
-
     async with aiohttp.ClientSession() as session:
         news_url, news = await get_latest_news_article(session)
         dev_url, devs = await probe_dev_docs(session)
 
         version = (news or {}).get("version") or (devs or {}).get("version")
         if not version:
-            # Nothing to announce
+            return  # nothing to announce
+
+        # Skip dedupe if forced
+        if not FORCE_SEND and state.get("last_version") == version:
             return
 
-        if state.get("last_version") == version:
-            # Already announced
-            return
-
-        # Time: prefer Epic status, else article publish time
         maint_utc = await epic_status_maintenance_time(session)
         published_iso = (news or {}).get("published")
         time_pt = to_pacific_display(maint_utc or published_iso)
 
-        # Highlights: prefer News, else Dev Docs
         lines = select_top_sections(news or devs, max_sections=3, max_items_per=3)
 
         links: List[str] = []
@@ -264,13 +226,16 @@ async def main():
         if dev_url:  links.append(f"[Dev release notes]({dev_url})")
         links.append("[Epic Status](https://status.epicgames.com/)")
 
-        payload = build_embed(version, time_pt, lines, links)
+        payload = build_embed(version, time_pt, lines, links, forced=FORCE_SEND)
         async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
             r.raise_for_status()
 
-        state["last_version"] = version
-        save_state(state)
+        # Only update state if not a one-off forced test
+        if not FORCE_SEND:
+            state["last_version"] = version
+            save_state(state)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
