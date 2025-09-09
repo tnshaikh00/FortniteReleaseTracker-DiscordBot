@@ -15,8 +15,11 @@ consumed by the notifier.
 from __future__ import annotations
 
 import os
+
 import re
 from typing import Dict, Optional
+=======
+from typing import Dict
 
 import requests
 
@@ -61,6 +64,7 @@ def fetch_game_version() -> Dict:
     published = current.get("since") or current.get("timestamp")
 
     return {"version": version, "published": published, "sections": []}
+
 
 
 def fetch_fortnite_news() -> Optional[Dict]:
@@ -109,3 +113,5 @@ def fetch_fortnite_status() -> Optional[str]:
     if events:
         return events[0].get("begin")
     return None
+
+
