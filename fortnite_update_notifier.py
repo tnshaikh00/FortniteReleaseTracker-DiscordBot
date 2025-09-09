@@ -1,4 +1,4 @@
-# fortnite_update_notifier.py
+## fortnite_update_notifier.py
 import os, re, json, asyncio
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -182,25 +182,13 @@ async def main():
         raise SystemExit("Set DISCORD_WEBHOOK_URL env var first.")
 
     state = load_state()
+    last_version = state.get("last_version")
+
     async with aiohttp.ClientSession() as session:
         news_url, news = await get_latest_news_article(session)
         dev_url, devs = await probe_dev_docs(session)
 
         version = (news.get("version") if news else None) or (devs.get("version") if devs else None)
-
-        # If no version found at all
-        if not version and not forced:
-            maint_utc = await epic_status_maintenance_time(session)
-            if maint_utc:
-                time_pt = to_pacific_display(maint_utc)
-                lines = ["*(Downtime detected — no patch notes yet)*"]
-                payload = build_embed("(unknown)", time_pt, lines, ["[Epic Status](https://status.epicgames.com/)"], None, forced)
-                async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
-                    r.raise_for_status()
-            return
-
-        if not forced and state.get("last_version") == version:
-            return
 
         maint_utc = await epic_status_maintenance_time(session)
         published_iso = (news.get("published") if news else None) or (devs.get("published") if devs else None)
@@ -218,7 +206,23 @@ async def main():
         if dev_url:  links.append(f"[Dev release notes]({dev_url})")
         links.append("[Epic Status](https://status.epicgames.com/)")
 
-        payload = build_embed(version or "(no version)", time_pt, lines, links, size_field, forced)
+        # --- Posting logic ---
+        if not version:
+            # No version scraped; but if downtime is detected OR state mismatch, post
+            if maint_utc or (last_version and not forced):
+                payload = build_embed("(unknown)", time_pt, lines, links, size_field, forced)
+                async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
+                    r.raise_for_status()
+                # Save placeholder to avoid spamming
+                state["last_version"] = "(unknown)"
+                save_state(state)
+            return
+
+        # Version found
+        if not forced and last_version == version:
+            return
+
+        payload = build_embed(version, time_pt, lines, links, size_field, forced)
         async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
             r.raise_for_status()
 
@@ -228,4 +232,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
