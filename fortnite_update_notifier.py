@@ -197,40 +197,48 @@ def build_embed(version: str, time_pt: str, lines: List[str], links: List[str], 
 
 async def main():
     # Optional CLI flag: --force
-    FORCE_SEND = FORCE_SEND_ENV or ("--force" in os.sys.argv)
+    FORCE_SEND = os.getenv("FORCE_SEND", "").lower() == "true" or ("--force" in os.sys.argv)
 
     if not DISCORD_WEBHOOK:
         raise SystemExit("Set DISCORD_WEBHOOK_URL env var first.")
 
     state = load_state()
+
     async with aiohttp.ClientSession() as session:
         news_url, news = await get_latest_news_article(session)
         dev_url, devs = await probe_dev_docs(session)
 
+        # Try to detect version
         version = (news or {}).get("version") or (devs or {}).get("version")
-        if not version:
-            return  # nothing to announce
 
-        # Skip dedupe if forced
-        if not FORCE_SEND and state.get("last_version") == version:
-            return
+        # If forced and no version found, still send a test/ping
+        if FORCE_SEND and not version:
+            version = "(no version detected)"
+            lines = ["**Connectivity Test**", "• This is a forced test message.", "• If you see this, the webhook is working."]
+            time_pt = to_pacific_display(None)
+            links = ["[Epic Status](https://status.epicgames.com/)"]
+        else:
+            # Normal behavior: bail if nothing to announce
+            if not version:
+                return
+            if not FORCE_SEND and state.get("last_version") == version:
+                return
+            maint_utc = await epic_status_maintenance_time(session)
+            published_iso = (news or {}).get("published")
+            time_pt = to_pacific_display(maint_utc or published_iso)
+            lines = select_top_sections(news or devs, max_sections=3, max_items_per=3)
+            links = []
+            if news_url: links.append(f"[Full notes (News)]({news_url})")
+            if dev_url:  links.append(f"[Dev release notes]({dev_url})")
+            links.append("[Epic Status](https://status.epicgames.com/)")
 
-        maint_utc = await epic_status_maintenance_time(session)
-        published_iso = (news or {}).get("published")
-        time_pt = to_pacific_display(maint_utc or published_iso)
+        # Build payload (send both content and embed for maximum deliverability)
+        embed = build_embed(version, time_pt, lines, links, forced=FORCE_SEND)
+        payload = {"content": "Fortnite update notifier", **embed}
 
-        lines = select_top_sections(news or devs, max_sections=3, max_items_per=3)
-
-        links: List[str] = []
-        if news_url: links.append(f"[Full notes (News)]({news_url})")
-        if dev_url:  links.append(f"[Dev release notes]({dev_url})")
-        links.append("[Epic Status](https://status.epicgames.com/)")
-
-        payload = build_embed(version, time_pt, lines, links, forced=FORCE_SEND)
         async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
             r.raise_for_status()
 
-        # Only update state if not a one-off forced test
         if not FORCE_SEND:
             state["last_version"] = version
             save_state(state)
