@@ -247,6 +247,17 @@ def main():
     if uefn_url: links.append(f"[UEFN What's New]({uefn_url})")
     links.append("[Epic Status](https://status.epicgames.com/)")
 
+    # --- DEBUG PRINTS ---
+    print("DEBUG — News:", news)
+    print("DEBUG — DevDocs:", devs)
+    print("DEBUG — UEFN:", uefn)
+    print("DEBUG — Picked version:", version)
+    print("DEBUG — Published:", published_iso)
+    print("DEBUG — Lines:", lines)
+    print("DEBUG — Links:", links)
+    print("DEBUG — Size field:", size_field)
+    # --------------------
+
     # Unknown path (no version, not forced)
     if not version and not forced:
         maint_utc = epic_status_maintenance_time()
@@ -264,18 +275,24 @@ def main():
 
         payload = build_embed("(unknown)", time_pt, lines, links, size_field, forced)
         wire = {"content": "Fortnite update notifier — unknown version", **payload}
-        post_webhook(wire)
 
+        print("DEBUG — Payload:", json.dumps(wire, indent=2))  # <— see exactly what’s posted
+
+        post_webhook(wire)
         state["last_version"] = "(unknown)"
         save_state(state)
         return
 
     # Dedupe by version
     if not forced and last_version == version:
+        print("DEBUG — Skipping: version already sent")
         return
 
     payload = build_embed(version, time_pt, lines, links, size_field, forced)
     wire = {"content": "Fortnite update notifier", **payload}
+
+    print("DEBUG — Payload:", json.dumps(wire, indent=2))  # <— see exactly what’s posted
+
     post_webhook(wire)
 
     if not forced and version:
