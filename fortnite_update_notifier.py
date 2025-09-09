@@ -184,17 +184,22 @@ async def main():
         news_url, news = await get_latest_news_article(session)
         dev_url, devs = await probe_dev_docs(session)
 
-        version = (news or {}).get("version") or (devs or {}).get("version")
+        version = (news or {}).get("version") if news else None
+        if not version and devs:
+            version = devs.get("version")
+
         if not version and not forced:
+        # No update detected, nothing to send
             return
         if not forced and state.get("last_version") == version:
-            return
+        return
 
         maint_utc = await epic_status_maintenance_time(session)
-        published_iso = (news or {}).get("published")
+        published_iso = (news or {}).get("published") if news else (devs or {}).get("published")
         time_pt = to_pacific_display(maint_utc or published_iso)
-
-        lines = select_top_sections(news or devs, max_sections=3, max_items_per=3)
+        
+        article = news or devs
+        lines = select_top_sections(article, max_sections=3, max_items_per=3) if article else ["*(no details available)*"]
 
         size_field = None
         if ENABLE_CROWDSIZE:
