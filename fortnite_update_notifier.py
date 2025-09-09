@@ -188,8 +188,17 @@ async def main():
 
         version = (news.get("version") if news else None) or (devs.get("version") if devs else None)
 
+        # If no version found at all
         if not version and not forced:
+            maint_utc = await epic_status_maintenance_time(session)
+            if maint_utc:
+                time_pt = to_pacific_display(maint_utc)
+                lines = ["*(Downtime detected — no patch notes yet)*"]
+                payload = build_embed("(unknown)", time_pt, lines, ["[Epic Status](https://status.epicgames.com/)"], None, forced)
+                async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
+                    r.raise_for_status()
             return
+
         if not forced and state.get("last_version") == version:
             return
 
@@ -219,3 +228,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
