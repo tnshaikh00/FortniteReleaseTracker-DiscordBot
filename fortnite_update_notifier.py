@@ -1,3 +1,5 @@
+# fortnite_update_notifier.py — API-first, conflict-free
+
 import os, json
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
@@ -8,17 +10,29 @@ import requests
 from fortnite_scraper import select_top_sections
 from fortnite_api import fetch_game_version, fetch_fortnite_news, fetch_fortnite_status
 
+# -------------------------
+# Config
+# -------------------------
 STATE_PATH = os.getenv("STATE_PATH", "state/fortnite_state.json")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 FORCE_SEND = os.getenv("FORCE_SEND", "").lower() == "true"
 
 
+# -------------------------
+# Helpers
+# -------------------------
 def post_webhook(payload: Dict, *, timeout: int = 20):
     r = requests.post(DISCORD_WEBHOOK, json=payload, timeout=timeout)
     r.raise_for_status()
 
 
 def get_latest_news_article() -> Tuple[Optional[str], Optional[Dict]]:
+    """
+    Use fortnite_api.fetch_fortnite_news() (your API module) and shape it.
+    Expected return from fetch_fortnite_news():
+      { "url": str|None, "version": str|None, "published": str|None,
+        "sections": [ { "header": str, "items": [str, ...] }, ... ] }
+    """
     try:
         news = fetch_fortnite_news()
         if news:
@@ -29,9 +43,14 @@ def get_latest_news_article() -> Tuple[Optional[str], Optional[Dict]]:
 
 
 def probe_fortnite_api() -> Tuple[Optional[str], Optional[Dict]]:
+    """
+    Use fortnite_api.fetch_game_version() to get a version/published fallback.
+    Expected shape:
+      { "version": str|None, "published": str|None, "sections": [...] (optional) }
+    """
     try:
         data = fetch_game_version()
-        if data.get("version"):
+        if data and data.get("version"):
             return "https://fortniteapi.io/", data
     except Exception:
         pass
@@ -39,6 +58,10 @@ def probe_fortnite_api() -> Tuple[Optional[str], Optional[Dict]]:
 
 
 def epic_status_maintenance_time() -> Optional[str]:
+    """
+    Use fortnite_api.fetch_fortnite_status() to prefer official downtime begin ISO time.
+    Should return ISO string like '2025-09-09T08:00:00Z' or None.
+    """
     try:
         return fetch_fortnite_status()
     except Exception:
@@ -51,6 +74,7 @@ def to_pacific_display(iso_or_utc: Optional[str]) -> str:
         return datetime.now(ZoneInfo("UTC")).astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
     try:
         if "UTC" in iso_or_utc:
+            # only used if a 'Mon DD, HH:MM UTC' ever sneaks in
             dt = datetime.strptime(iso_or_utc.replace(" UTC", ""), "%b %d, %H:%M").replace(
                 year=datetime.now().year, tzinfo=ZoneInfo("UTC")
             )
@@ -96,6 +120,9 @@ def build_embed(version: str, time_pt: str, lines: List[str], links: List[str], 
     }
 
 
+# -------------------------
+# Main
+# -------------------------
 def main():
     forced = FORCE_SEND or ("--force" in os.sys.argv)
     if not DISCORD_WEBHOOK:
@@ -104,8 +131,9 @@ def main():
     state = load_state()
     last_version = state.get("last_version")
 
+    # API-first sources
     news_url, news = get_latest_news_article()
-    _, api = probe_fortnite_api()
+    api_url, api = probe_fortnite_api()
 
     version = (news.get("version") if news else None) or (api.get("version") if api else None)
 
@@ -119,15 +147,17 @@ def main():
     links = []
     if news_url:
         links.append(f"[Full notes]({news_url})")
-    links.append("[fortniteapi.io](https://fortniteapi.io/)")
+    if api_url:
+        links.append(f"[fortniteapi.io]({api_url})")
 
+    # Unknown path (no version, not forced)
     if not version and not forced:
         maint_utc = epic_status_maintenance_time()
         if maint_utc:
-            reason = "Downtime detected via Fortnite API — patch notes not yet available."
+            reason = "Downtime detected — patch notes not yet available."
             time_pt = to_pacific_display(maint_utc)
         else:
-            reason = "State mismatch detected — couldn't retrieve a version from the API."
+            reason = "State mismatch — couldn't retrieve a version from the API."
             time_pt = to_pacific_display(None)
 
         lines = [f"*({reason})*"]
@@ -141,6 +171,7 @@ def main():
         save_state(state)
         return
 
+    # Dedupe by version
     if not forced and last_version == version:
         return
 
@@ -155,3 +186,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

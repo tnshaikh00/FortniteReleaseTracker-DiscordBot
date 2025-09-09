@@ -11,6 +11,17 @@ The function exposed (``fetch_game_version``) returns a dictionary in
 the same shape used throughout the project: ``{"version": str | None,
 "published": str | None, "sections": list}`` so that it can easily be
 consumed by the notifier.
+# fortnite_api.py
+"""
+Utility for querying fortniteapi.io for version, news, and status.
+
+Environment:
+  FORTNITE_API_KEY  (required) — your fortniteapi.io API key
+
+All public functions return data shaped to fit the notifier:
+  - fetch_game_version() -> {"version": str|None, "published": str|None, "sections": []}
+  - fetch_fortnite_news() -> {"version": str|None, "published": str|None, "sections":[{header,items}], "url": str|None} | None
+  - fetch_fortnite_status() -> str|None   (ISO time of downtime begin)
 """
 from __future__ import annotations
 
@@ -20,8 +31,8 @@ from typing import Dict, Optional
 
 import requests
 
-BASE_URL = "https://fortniteapi.io/v1"
 API_KEY_ENV = "FORTNITE_API_KEY"
+
 
 class FortniteAPIError(RuntimeError):
     """Raised when the Fortnite API client encounters an error."""
@@ -36,23 +47,38 @@ def _auth_headers() -> Dict[str, str]:
     return {"Authorization": key}
 
 
-def fetch_game_version() -> Dict:
-    """Return information about the currently active game version.
-
-    The data returned is a minimal dictionary containing ``version`` and
-    ``published`` keys.  The function is intentionally tolerant to small
-    variations in the JSON payload returned by the API.  If the payload
-    cannot be interpreted, an empty dictionary is returned.
-    """
-
-    url = f"{BASE_URL}/game/versions"
+def _get_json(url: str, *, params: Dict | None = None, timeout: int = 20) -> Dict:
     try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=20)
+        resp = requests.get(url, headers=_auth_headers(), params=params or {}, timeout=timeout)
         resp.raise_for_status()
-        data = resp.json() or {}
-    except Exception as exc:  # pragma: no cover - network failure path
+        return resp.json() or {}
+    except Exception as exc:  # pragma: no cover - network failures
         raise FortniteAPIError(str(exc)) from exc
 
+
+# -------------------------------------------------------------------
+# Versions
+# -------------------------------------------------------------------
+def fetch_game_version() -> Dict:
+    """
+    Return {"version": str|None, "published": str|None, "sections": []}.
+    Tries /v2 first, then /v1 for broader compatibility.
+    """
+    data: Dict = {}
+    tried = []
+
+    for url in (
+        "https://fortniteapi.io/v2/game/versions",
+        "https://fortniteapi.io/v1/game/versions",
+    ):
+        tried.append(url)
+        try:
+            data = _get_json(url)
+            break
+        except FortniteAPIError:
+            continue
+
+    # Known shapes: {"current": {...}} or {"data": [{...}, ...]}
     current = data.get("current") or data.get("data") or {}
     if isinstance(current, list):
         current = current[0] if current else {}
@@ -63,50 +89,62 @@ def fetch_game_version() -> Dict:
     return {"version": version, "published": published, "sections": []}
 
 
-def fetch_fortnite_news() -> Optional[Dict]:
-    """Return the latest Fortnite news post via fortniteapi.io.
+# -------------------------------------------------------------------
+# News
+# -------------------------------------------------------------------
+_VERSION_RX = re.compile(r"\bv?\s?(\d{1,2}[.\-]\d{1,2})\b", re.IGNORECASE)
 
-    The response is normalized to the project's standard structure.  If the
-    API returns no posts, ``None`` is returned instead.
+def fetch_fortnite_news(lang: str = "en") -> Optional[Dict]:
     """
+    Return the latest Fortnite news post normalized to:
+      {"version": str|None, "published": str|None,
+       "sections":[{"header": str, "items":[str, ...]}], "url": str|None}
+    Returns None if no posts are available.
+    """
+    data = _get_json("https://fortniteapi.io/v2/news", params={"lang": lang})
 
-    url = "https://fortniteapi.io/v2/news"
-    try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:  # pragma: no cover - network failure path
-        raise FortniteAPIError(str(exc)) from exc
-
-    posts = data.get("news", {}).get("motds", [])
+    posts = (
+        data.get("news", {}).get("motds", [])
+        or data.get("news", {}).get("br", {}).get("motds", [])
+        or []
+    )
     if not posts:
         return None
 
     latest = posts[0]
-    title = latest.get("title", "")
-    body = latest.get("body", "")
-    version_match = re.search(r"v\d+\.\d+", f"{title} {body}")
+    title = (latest.get("title") or latest.get("tabTitle") or "").strip()
+    body = (latest.get("body") or latest.get("description") or "").strip()
+    published = latest.get("time") or latest.get("date")
+    url = latest.get("url") or latest.get("videoUrl")
+
+    # Extract a version token if present, e.g., v27.10 / 27.10
+    m = _VERSION_RX.search(f"{title} {body}")
+    token = (m.group(1).replace("-", ".") if m else None)
+    version = (f"v{token}" if token and not token.lower().startswith("v") else token)
+
+    sections = [{
+        "header": title or "Highlights",
+        "items": [s for s in (line.strip() for line in body.splitlines()) if len(s) >= 3] or ([body] if body else []),
+    }]
 
     return {
-        "version": version_match.group(0) if version_match else None,
-        "published": latest.get("time") or None,
-        "sections": [{"header": title, "items": [body]}],
-        "url": latest.get("url"),
+        "version": version,
+        "published": published,
+        "sections": sections,
+        "url": url,
     }
 
 
+# -------------------------------------------------------------------
+# Status / Downtime
+# -------------------------------------------------------------------
 def fetch_fortnite_status() -> Optional[str]:
-    """Return the scheduled downtime start time if present."""
-
-    url = "https://fortniteapi.io/v2/status/fortnite"
-    try:
-        resp = requests.get(url, headers=_auth_headers(), timeout=20)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:  # pragma: no cover - network failure path
-        raise FortniteAPIError(str(exc)) from exc
-
-    events = data.get("status", {}).get("downtime", [])
+    """
+    Return ISO timestamp string for scheduled downtime 'begin' if present, else None.
+    """
+    data = _get_json("https://fortniteapi.io/v2/status/fortnite")
+    events = data.get("status", {}).get("downtime", []) or []
     if events:
-        return events[0].get("begin")
+        return events[0].get("begin") or events[0].get("start")
     return None
+
