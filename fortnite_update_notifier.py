@@ -50,7 +50,8 @@ DEFAULT_HEADERS = {
 # -------------------------
 async def fetch(session: aiohttp.ClientSession, url: str, *, retries: int = 3, json_mode: bool = False, headers: Dict = None):
     h = dict(DEFAULT_HEADERS)
-    if headers: h.update(headers)
+    if headers:
+        h.update(headers)
     delay = 0.8
     for i in range(retries):
         try:
@@ -74,7 +75,8 @@ async def get_latest_news_article(session: aiohttp.ClientSession):
     soup = BeautifulSoup(html, "html.parser")
     for a in soup.find_all("a"):
         title = (a.get_text(" ", strip=True) or "").lower()
-        if not title: continue
+        if not title:
+            continue
         if any(k in title for k in ("update","patch","release notes","hotfix","v")):
             href = a.get("href", "")
             if href and not href.startswith("http"):
@@ -184,20 +186,17 @@ async def main():
         news_url, news = await get_latest_news_article(session)
         dev_url, devs = await probe_dev_docs(session)
 
-        version = (news or {}).get("version") if news else None
-        if not version and devs:
-            version = devs.get("version")
+        version = (news.get("version") if news else None) or (devs.get("version") if devs else None)
 
         if not version and not forced:
-        # No update detected, nothing to send
             return
         if not forced and state.get("last_version") == version:
-        return
+            return
 
         maint_utc = await epic_status_maintenance_time(session)
-        published_iso = (news or {}).get("published") if news else (devs or {}).get("published")
+        published_iso = (news.get("published") if news else None) or (devs.get("published") if devs else None)
         time_pt = to_pacific_display(maint_utc or published_iso)
-        
+
         article = news or devs
         lines = select_top_sections(article, max_sections=3, max_items_per=3) if article else ["*(no details available)*"]
 
@@ -220,5 +219,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
