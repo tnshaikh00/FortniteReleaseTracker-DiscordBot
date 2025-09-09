@@ -1,28 +1,4 @@
-"""Utility for querying fortniteapi.io for version information.
-
-This module talks to the public fortniteapi.io REST API and returns
-basic information about the current Fortnite version.  The API requires
-an API key which should be supplied via the ``FORTNITE_API_KEY``
-environment variable.  Only a very small portion of the API is used
-here; the client simply fetches the list of game versions and returns
-metadata for the currently active one.
-
-The function exposed (``fetch_game_version``) returns a dictionary in
-the same shape used throughout the project: ``{"version": str | None,
-"published": str | None, "sections": list}`` so that it can easily be
-consumed by the notifier.
 # fortnite_api.py
-"""
-Utility for querying fortniteapi.io for version, news, and status.
-
-Environment:
-  FORTNITE_API_KEY  (required) — your fortniteapi.io API key
-
-All public functions return data shaped to fit the notifier:
-  - fetch_game_version() -> {"version": str|None, "published": str|None, "sections": []}
-  - fetch_fortnite_news() -> {"version": str|None, "published": str|None, "sections":[{header,items}], "url": str|None} | None
-  - fetch_fortnite_status() -> str|None   (ISO time of downtime begin)
-"""
 from __future__ import annotations
 
 import os
