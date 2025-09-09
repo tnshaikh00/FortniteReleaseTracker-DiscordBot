@@ -36,6 +36,7 @@ jobs:
       - name: Run notifier
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FORTNITE_API_KEY: ${{ secrets.FORTNITE_API_KEY }}
           STATE_PATH: state/fortnite_state.json
           ENABLE_CROWDSIZE: "true"
           # Pass FORCE_SEND from workflow_dispatch input (defaults to false)
