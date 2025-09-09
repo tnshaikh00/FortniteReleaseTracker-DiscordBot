@@ -13,7 +13,11 @@ from fortnite_scraper import (
     select_top_sections,
 )
 from size_parser import parse_crowd_sizes, format_size_field
+
+from fortnite_api import fetch_game_version, fetch_fortnite_news, fetch_fortnite_status
+=======
 from fortnite_api import fetch_game_version
+
 
 # -------------------------
 # Config
@@ -88,6 +92,15 @@ def post_webhook(payload: Dict, *, timeout: int = 20):
 # Probes (sync)
 # -------------------------
 def get_latest_news_article() -> Tuple[Optional[str], Optional[Dict]]:
+    try:
+        api_news = fetch_fortnite_news()
+        if api_news:
+            dbg("[NEWS] using fortniteapi.io news endpoint")
+            return "https://fortniteapi.io/news", api_news
+        dbg("[NEWS] fortniteapi.io returned no news")
+    except Exception as e:
+        dbg(f"[NEWS] fortniteapi.io error: {repr(e)}")
+
     try:
         html = fetch(NEWS_URL)
     except requests.HTTPError as e:
@@ -169,6 +182,15 @@ def probe_fortnite_api() -> Tuple[Optional[str], Optional[Dict]]:
     return None, None
 
 def epic_status_maintenance_time() -> Optional[str]:
+    try:
+        begin = fetch_fortnite_status()
+        if begin:
+            dbg(f"[STATUS] downtime via fortniteapi.io: {begin}")
+            return begin
+        dbg("[STATUS] fortniteapi.io reported no downtime")
+    except Exception as e:
+        dbg(f"[STATUS] fortniteapi.io error: {repr(e)}")
+
     try:
         html = fetch(EPIC_STATUS_URL)
         text = " ".join(BeautifulSoup(html, "html.parser").stripped_strings)
