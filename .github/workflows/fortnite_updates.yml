@@ -28,7 +28,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           STATE_PATH: state/fortnite_state.json
           ENABLE_CROWDSIZE: "true"   # enable size parsing
-        run: python fortnite_update_notifier.py --force
+        run: python fortnite_update_notifier.py
 
       - name: Commit state if changed
         run: |
