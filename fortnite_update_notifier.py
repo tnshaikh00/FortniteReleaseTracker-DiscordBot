@@ -214,7 +214,7 @@ async def main():
         # If forced and no version found, still send a test/ping
         if FORCE_SEND and not version:
             version = "(no version detected)"
-            lines = ["**Connectivity Test**", "• This is a forced test message.", "• If you see this, the webhook is working."]
+            lines = ["**Connectivity Test**", "• This is a forced test message.", "• If you see this, Taimur is a beast at hacking."]
             time_pt = to_pacific_display(None)
             links = ["[Epic Status](https://status.epicgames.com/)"]
         else:
