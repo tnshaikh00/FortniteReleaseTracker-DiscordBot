@@ -26,7 +26,7 @@ jobs:
       - env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           STATE_PATH: state/fortnite_state.json
-        run: python fortnite_update_notifier.py --force
+        run: python fortnite_update_notifier.py
       - run: |
           if [[ -n "$(git status --porcelain)" ]]; then
             git config user.name "github-actions[bot]"
