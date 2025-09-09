@@ -15,7 +15,7 @@ from fortnite_scraper import (
 from size_parser import parse_crowd_sizes, format_size_field
 
 from fortnite_api import fetch_game_version, fetch_fortnite_news, fetch_fortnite_status
-=======
+
 from fortnite_api import fetch_game_version
 
 
