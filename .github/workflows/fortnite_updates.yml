@@ -40,6 +40,7 @@ jobs:
           ENABLE_CROWDSIZE: "true"
           # Pass FORCE_SEND from workflow_dispatch input (defaults to false)
           FORCE_SEND: ${{ github.event.inputs.force_send || 'false' }}
+          DEBUG: "1"
         run: python fortnite_update_notifier.py
 
       - name: Commit state if changed
