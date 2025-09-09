@@ -18,7 +18,7 @@ import os
 
 import re
 from typing import Dict, Optional
-=======
+
 from typing import Dict
 
 import requests
