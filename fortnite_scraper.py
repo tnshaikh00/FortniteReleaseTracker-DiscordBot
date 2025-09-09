@@ -123,7 +123,14 @@ def parse_epic_dev_docs_article(html: str) -> Dict:
 # --------------------------------------------------------------------
 # UEFN "What's New" page (stable, versioned releases)
 # --------------------------------------------------------------------
-_UEFN_RELEASE_RX = re.compile(r"release\s+(\d{2})[.\-](\d{1,2})\s*\(([^)]+)\)", re.IGNORECASE)
+_UEFN_RELEASE_RX = re.compile(
+    r"""release\s+(\d{1,2})[.\-](\d{1,2})      # 37.20 or 37-20
+        (?:\s*[\(\-–—]\s*                     # optional "(" or dash/emdash
+        ([^)]+?20\d{2})                       # date-like text containing a 20xx year
+        \)?)?                                  # optional closing ")"
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
 def parse_uefn_whats_new(html: str) -> Dict:
     """
@@ -133,7 +140,7 @@ def parse_uefn_whats_new(html: str) -> Dict:
 
     # Find candidate "Release XX.YY (Month DD, YYYY)" headers
     candidates = []
-    for tag in soup.select("h2, h3"):
+    for tag in soup.select("h2, h3, h4"):
         t = _norm(tag.get_text(" ", strip=True))
         m = _UEFN_RELEASE_RX.search(t)
         if not m:
