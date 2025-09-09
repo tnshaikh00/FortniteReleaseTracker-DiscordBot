@@ -13,6 +13,7 @@ from fortnite_scraper import (
     select_top_sections,
 )
 from size_parser import parse_crowd_sizes, format_size_field
+from fortnite_api import fetch_game_version
 
 # -------------------------
 # Config
@@ -154,6 +155,19 @@ def probe_uefn_whats_new() -> Tuple[Optional[str], Optional[Dict]]:
         dbg(f"[UEFN] error: {repr(e)}")
     return None, None
 
+
+def probe_fortnite_api() -> Tuple[Optional[str], Optional[Dict]]:
+    """Use fortniteapi.io as an additional source for version info."""
+    try:
+        data = fetch_game_version()
+        if data.get("version"):
+            dbg(f"[FAPI] v={data.get('version')}")
+            return "https://fortniteapi.io/", data
+        dbg("[FAPI] no version")
+    except Exception as e:
+        dbg(f"[FAPI] error: {repr(e)}")
+    return None, None
+
 def epic_status_maintenance_time() -> Optional[str]:
     try:
         html = fetch(EPIC_STATUS_URL)
@@ -254,11 +268,13 @@ def main():
     news_url, news = get_latest_news_article()
     dev_url, devs = probe_dev_docs()
     uefn_url, uefn = probe_uefn_whats_new()
+    api_url, api = probe_fortnite_api()
 
     version = (
         (news.get("version") if news else None)
         or (devs.get("version") if devs else None)
         or (uefn.get("version") if uefn else None)
+        or (api.get("version") if api else None)
     )
 
     maint_utc = epic_status_maintenance_time()
@@ -266,10 +282,11 @@ def main():
         (news.get("published") if news else None)
         or (devs.get("published") if devs else None)
         or (uefn.get("published") if uefn else None)
+        or (api.get("published") if api else None)
     )
     time_pt = to_pacific_display(maint_utc or published_iso)
 
-    article = news or devs or uefn
+    article = news or devs or uefn or api
     lines = select_top_sections(article, max_sections=3, max_items_per=3) if article else ["*(no details available)*"]
 
     size_field = crowdsourced_sizes()
@@ -278,6 +295,7 @@ def main():
     if news_url: links.append(f"[Full notes (News)]({news_url})")
     if dev_url:  links.append(f"[Dev release notes]({dev_url})")
     if uefn_url: links.append(f"[UEFN What's New]({uefn_url})")
+    if api_url: links.append(f"[fortniteapi.io]({api_url})")
     links.append("[Epic Status](https://status.epicgames.com/)")
 
     dbg("[SUMMARY] version:", version)
