@@ -207,15 +207,34 @@ async def main():
         links.append("[Epic Status](https://status.epicgames.com/)")
 
         # --- Posting logic ---
-        if not version:
-            # No version scraped; but if downtime is detected OR state mismatch, post
-            if maint_utc or (last_version and not forced):
-                payload = build_embed("(unknown)", time_pt, lines, links, size_field, forced)
-                async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
-                    r.raise_for_status()
-                # Save placeholder to avoid spamming
-                state["last_version"] = "(unknown)"
-                save_state(state)
+        if not version and not forced:
+            maint_utc = await epic_status_maintenance_time(session)
+            reason = None
+            if maint_utc:
+                reason = "Downtime detected via Epic Status — patch notes not yet available."
+                time_pt = to_pacific_display(maint_utc)
+            else:
+                reason = "State mismatch detected — couldn’t scrape a version from Epic sources."
+                time_pt = to_pacific_display(None)
+        
+            # Try sizes even in unknown case
+            size_field = None
+            if ENABLE_CROWDSIZE:
+                size_field = await crowdsourced_sizes(session)
+        
+            lines = [f"*({reason})*"]
+            links = ["[Epic Status](https://status.epicgames.com/)"]
+        
+            payload = build_embed("(unknown)", time_pt, lines, links, size_field, forced)
+        
+            # Also send plain content so something is always visible
+            wire = {"content": "Fortnite update notifier — unknown version", **payload}
+        
+            async with session.post(DISCORD_WEBHOOK, json=wire, timeout=ClientTimeout(total=20)) as r:
+                r.raise_for_status()
+            # Save placeholder to avoid spamming
+            state["last_version"] = "(unknown)"
+            save_state(state)
             return
 
         # Version found
