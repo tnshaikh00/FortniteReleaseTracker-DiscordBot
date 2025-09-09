@@ -1,4 +1,3 @@
-# fortnite_update_notifier.py (synchronous, lean)
 import os, re, json, time
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
@@ -32,13 +31,24 @@ STATE_PATH = os.getenv("STATE_PATH", "state/fortnite_state.json")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 FORCE_SEND = os.getenv("FORCE_SEND", "").lower() == "true"
 ENABLE_CROWDSIZE = os.getenv("ENABLE_CROWDSIZE", "").lower() == "true"
+DEBUG = os.getenv("DEBUG", "").strip() in ("1", "true", "True", "yes", "on")
 
+def dbg(*a):
+    if DEBUG:
+        print(*a, flush=True)
+
+# Headers: more “browser-like” to avoid basic bot blocks
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/127.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Connection": "keep-alive",
 }
 
 # -------------------------
@@ -52,14 +62,14 @@ def fetch(url: str, *, retries: int = 3, json_mode: bool = False, headers: Dict 
     last_exc = None
     for i in range(retries):
         try:
+            dbg(f"[HTTP] GET {url} (try {i+1}/{retries})")
             r = requests.get(url, headers=h, timeout=timeout)
-            if r.status_code == 403:
-                # keep behavior consistent with aiohttp version: treat as fatal for this URL
-                r.raise_for_status()
+            dbg(f"[HTTP] {r.status_code} for {url}")
             r.raise_for_status()
             return r.json() if json_mode else r.text
         except Exception as e:
             last_exc = e
+            dbg(f"[HTTP] Error on {url}: {repr(e)}")
             if i == retries - 1:
                 raise
             time.sleep(delay); delay *= 2
@@ -67,7 +77,10 @@ def fetch(url: str, *, retries: int = 3, json_mode: bool = False, headers: Dict 
         raise last_exc
 
 def post_webhook(payload: Dict, *, timeout: int = 20):
+    dbg("[DISCORD] POST webhook payload title:",
+        payload.get("embeds", [{}])[0].get("title"))
     r = requests.post(DISCORD_WEBHOOK, json=payload, timeout=timeout)
+    dbg("[DISCORD] Status:", r.status_code)
     r.raise_for_status()
 
 # -------------------------
@@ -78,6 +91,7 @@ def get_latest_news_article() -> Tuple[Optional[str], Optional[Dict]]:
         html = fetch(NEWS_URL)
     except requests.HTTPError as e:
         if e.response is not None and e.response.status_code == 403:
+            dbg("[NEWS] 403 on news landing page")
             return None, None
         raise
 
@@ -96,16 +110,22 @@ def get_latest_news_article() -> Tuple[Optional[str], Optional[Dict]]:
             score = int("/news/" in href.lower())
             candidates.append((score, href))
 
+    dbg(f"[NEWS] candidates found: {len(candidates)}")
+
     for _, href in sorted(candidates, key=lambda x: x[0], reverse=True):
         try:
             article_html = fetch(href)
             parsed = parse_fortnite_news_article(article_html)
             if parsed.get("version") or parsed.get("sections"):
+                dbg(f"[NEWS] selected: {href} v={parsed.get('version')} sections={len(parsed.get('sections', []))}")
                 return href, parsed
-        except requests.HTTPError:
+        except requests.HTTPError as e:
+            dbg(f"[NEWS] skip {href} due to HTTP error: {getattr(e.response,'status_code',None)}")
             continue
-        except Exception:
+        except Exception as e:
+            dbg(f"[NEWS] skip {href} due to parse error: {repr(e)}")
             continue
+    dbg("[NEWS] no valid article parsed")
     return None, None
 
 def probe_dev_docs() -> Tuple[Optional[str], Optional[Dict]]:
@@ -114,9 +134,12 @@ def probe_dev_docs() -> Tuple[Optional[str], Optional[Dict]]:
             html = fetch(url)
             parsed = parse_epic_dev_docs_article(html)
             if parsed.get("version"):
+                dbg(f"[DEV] {url} v={parsed.get('version')} sections={len(parsed.get('sections', []))}")
                 return url, parsed
-        except Exception:
-            pass
+            else:
+                dbg(f"[DEV] {url} no version")
+        except Exception as e:
+            dbg(f"[DEV] {url} error: {repr(e)}")
     return None, None
 
 def probe_uefn_whats_new() -> Tuple[Optional[str], Optional[Dict]]:
@@ -124,9 +147,11 @@ def probe_uefn_whats_new() -> Tuple[Optional[str], Optional[Dict]]:
         html = fetch(UEFN_WHATS_NEW_URL)
         parsed = parse_uefn_whats_new(html)
         if parsed.get("version"):
+            dbg(f"[UEFN] v={parsed.get('version')} sections={len(parsed.get('sections', []))}")
             return UEFN_WHATS_NEW_URL, parsed
-    except Exception:
-        pass
+        dbg("[UEFN] no version")
+    except Exception as e:
+        dbg(f"[UEFN] error: {repr(e)}")
     return None, None
 
 def epic_status_maintenance_time() -> Optional[str]:
@@ -135,8 +160,13 @@ def epic_status_maintenance_time() -> Optional[str]:
         text = " ".join(BeautifulSoup(html, "html.parser").stripped_strings)
         # Allow H:mm or HH:mm and optional space before UTC
         m = re.search(r"(?:Scheduled|In progress).+?(\w{3}\s\d{1,2},\s\d{1,2}:\d{2}\s?UTC)", text)
+        if m:
+            dbg(f"[STATUS] found maintenance time: {m.group(1)}")
+        else:
+            dbg("[STATUS] no maintenance time found")
         return m.group(1) if m else None
-    except Exception:
+    except Exception as e:
+        dbg(f"[STATUS] error: {repr(e)}")
         return None
 
 def crowdsourced_sizes() -> Optional[str]:
@@ -152,9 +182,12 @@ def crowdsourced_sizes() -> Optional[str]:
             f"{c['data'].get('title','')} {c['data'].get('selftext','')}"
             for c in raw.get("data", {}).get("children", [])
         ]
-        sizes = parse_crowd_sizes(posts)  # improved version with votes
-        return format_size_field(sizes)
-    except Exception:
+        sizes = parse_crowd_sizes(posts)
+        out = format_size_field(sizes)
+        dbg(f"[SIZES] {out}")
+        return out
+    except Exception as e:
+        dbg(f"[SIZES] error: {repr(e)}")
         return None
 
 # -------------------------
@@ -247,16 +280,10 @@ def main():
     if uefn_url: links.append(f"[UEFN What's New]({uefn_url})")
     links.append("[Epic Status](https://status.epicgames.com/)")
 
-    # --- DEBUG PRINTS ---
-    print("DEBUG — News:", news)
-    print("DEBUG — DevDocs:", devs)
-    print("DEBUG — UEFN:", uefn)
-    print("DEBUG — Picked version:", version)
-    print("DEBUG — Published:", published_iso)
-    print("DEBUG — Lines:", lines)
-    print("DEBUG — Links:", links)
-    print("DEBUG — Size field:", size_field)
-    # --------------------
+    dbg("[SUMMARY] version:", version)
+    dbg("[SUMMARY] published_iso:", published_iso)
+    dbg("[SUMMARY] lines:", lines)
+    dbg("[SUMMARY] links:", links)
 
     # Unknown path (no version, not forced)
     if not version and not forced:
@@ -275,24 +302,21 @@ def main():
 
         payload = build_embed("(unknown)", time_pt, lines, links, size_field, forced)
         wire = {"content": "Fortnite update notifier — unknown version", **payload}
-
-        print("DEBUG — Payload:", json.dumps(wire, indent=2))  # <— see exactly what’s posted
-
+        dbg("[DISCORD] Payload preview:", json.dumps(wire, indent=2))
         post_webhook(wire)
+
         state["last_version"] = "(unknown)"
         save_state(state)
         return
 
     # Dedupe by version
     if not forced and last_version == version:
-        print("DEBUG — Skipping: version already sent")
+        dbg("[SKIP] version already sent:", version)
         return
 
     payload = build_embed(version, time_pt, lines, links, size_field, forced)
     wire = {"content": "Fortnite update notifier", **payload}
-
-    print("DEBUG — Payload:", json.dumps(wire, indent=2))  # <— see exactly what’s posted
-
+    dbg("[DISCORD] Payload preview:", json.dumps(wire, indent=2))
     post_webhook(wire)
 
     if not forced and version:
@@ -301,3 +325,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
