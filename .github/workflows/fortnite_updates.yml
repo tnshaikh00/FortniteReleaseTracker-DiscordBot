@@ -1,9 +1,8 @@
-# .github/workflows/fortnite_updates.yml
 name: Fortnite Updates to Discord
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/15 * * * *"   # every 15 minutes
   workflow_dispatch: {}
 
 permissions:
@@ -14,28 +13,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          echo "Repo root:" && pwd
-          ls -la
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: |
+
+      - name: Install dependencies
+        run: |
           python -m pip install --upgrade pip
           pip install aiohttp beautifulsoup4
-      - env:
+
+      - name: Run notifier
+        env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           STATE_PATH: state/fortnite_state.json
-          ENABLE_CROWDSIZE: "true"
+          ENABLE_CROWDSIZE: "true"   # enable size parsing
         run: python fortnite_update_notifier.py --force
-      - run: |
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add state/fortnite_state.json
-            git commit -m "chore: update fortnite_state.json [skip ci]"
-            git push
-          else
-            echo "No state changes."
-          fi
 
+      - name: Commit state if changed
+        run: |
+          if [[ -f state/fortnite_state.json ]]; then
+            if ! git diff --quiet state/fortnite_state.json; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add state/fortnite_state.json
+              git commit -m "chore: update fortnite_state.json [skip ci]"
+              git push
+            else
+              echo "State file unchanged."
+            fi
+          else
+            echo "No state file yet."
+          fi
