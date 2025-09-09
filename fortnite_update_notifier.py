@@ -5,7 +5,7 @@ from typing import Optional, Tuple, List, Dict
 import aiohttp
 from bs4 import BeautifulSoup
 from zoneinfo import ZoneInfo  # Python 3.9+
-from scripts.fortnite_scraper import (
+from fortnite_scraper import (
     parse_fortnite_news_article,
     parse_epic_dev_docs_article,
     compose_summary_lines,
