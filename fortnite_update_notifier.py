@@ -1,7 +1,7 @@
-## fortnite_update_notifier.py
+# fortnite_update_notifier.py
 import os, re, json, asyncio
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from fortnite_scraper import (
     parse_fortnite_news_article,
     parse_epic_dev_docs_article,
+    parse_uefn_whats_new,          # NEW
     select_top_sections,
 )
 from size_parser import parse_crowd_sizes, format_size_field
@@ -25,6 +26,7 @@ DEV_DOCS = [
     "https://dev.epicgames.com/documentation/en-us/fortnite/37-00-fortnite-ecosystem-updates-and-release-notes",
     "https://dev.epicgames.com/documentation/en-us/fortnite/36-20-fortnite-ecosystem-updates-and-release-notes",
 ]
+UEFN_WHATS_NEW_URL = "https://dev.epicgames.com/documentation/en-us/fortnite/whats-new-in-unreal-editor-for-fortnite"  # NEW
 REDDIT_NEW_JSON = "https://www.reddit.com/r/FortNiteBR/new.json?limit=30"
 
 STATE_PATH = os.getenv("STATE_PATH", "state/fortnite_state.json")
@@ -48,7 +50,14 @@ DEFAULT_HEADERS = {
 # -------------------------
 # Helpers
 # -------------------------
-async def fetch(session: aiohttp.ClientSession, url: str, *, retries: int = 3, json_mode: bool = False, headers: Dict = None):
+async def fetch(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    retries: int = 3,
+    json_mode: bool = False,
+    headers: Dict | None = None
+):
     h = dict(DEFAULT_HEADERS)
     if headers:
         h.update(headers)
@@ -63,9 +72,10 @@ async def fetch(session: aiohttp.ClientSession, url: str, *, retries: int = 3, j
         except Exception:
             if i == retries - 1:
                 raise
-            await asyncio.sleep(delay); delay *= 2
+            await asyncio.sleep(delay)
+            delay *= 2
 
-async def get_latest_news_article(session: aiohttp.ClientSession):
+async def get_latest_news_article(session: aiohttp.ClientSession) -> Tuple[Optional[str], Optional[Dict]]:
     try:
         html = await fetch(session, NEWS_URL)
     except ClientResponseError as e:
@@ -77,7 +87,7 @@ async def get_latest_news_article(session: aiohttp.ClientSession):
         title = (a.get_text(" ", strip=True) or "").lower()
         if not title:
             continue
-        if any(k in title for k in ("update","patch","release notes","hotfix","v")):
+        if any(k in title for k in ("update", "patch", "release notes", "hotfix", "v")):
             href = a.get("href", "")
             if href and not href.startswith("http"):
                 href = "https://www.fortnite.com" + href
@@ -88,7 +98,7 @@ async def get_latest_news_article(session: aiohttp.ClientSession):
             return href, parse_fortnite_news_article(article_html)
     return None, None
 
-async def probe_dev_docs(session: aiohttp.ClientSession):
+async def probe_dev_docs(session: aiohttp.ClientSession) -> Tuple[Optional[str], Optional[Dict]]:
     for url in DEV_DOCS:
         try:
             html = await fetch(session, url)
@@ -97,6 +107,16 @@ async def probe_dev_docs(session: aiohttp.ClientSession):
                 return url, parsed
         except Exception:
             pass
+    return None, None
+
+async def probe_uefn_whats_new(session: aiohttp.ClientSession) -> Tuple[Optional[str], Optional[Dict]]:
+    try:
+        html = await fetch(session, UEFN_WHATS_NEW_URL)
+        parsed = parse_uefn_whats_new(html)
+        if parsed.get("version"):
+            return UEFN_WHATS_NEW_URL, parsed
+    except Exception:
+        pass
     return None, None
 
 async def epic_status_maintenance_time(session: aiohttp.ClientSession) -> Optional[str]:
@@ -131,9 +151,11 @@ def to_pacific_display(iso_or_utc: Optional[str]) -> str:
         return datetime.now(ZoneInfo("UTC")).astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
     try:
         if "UTC" in iso_or_utc:
-            dt = datetime.strptime(iso_or_utc.replace(" UTC",""), "%b %d, %H:%M").replace(year=datetime.now().year, tzinfo=ZoneInfo("UTC"))
+            dt = datetime.strptime(iso_or_utc.replace(" UTC", ""), "%b %d, %H:%M").replace(
+                year=datetime.now().year, tzinfo=ZoneInfo("UTC")
+            )
         else:
-            dt = datetime.fromisoformat(iso_or_utc.replace("Z","+00:00"))
+            dt = datetime.fromisoformat(iso_or_utc.replace("Z", "+00:00"))
         return dt.astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
     except Exception:
         return datetime.now(ZoneInfo("UTC")).astimezone(PT).strftime("%Y-%m-%d %I:%M %p %Z")
@@ -185,16 +207,26 @@ async def main():
     last_version = state.get("last_version")
 
     async with aiohttp.ClientSession() as session:
+        # Probes (now with UEFN fallback)
         news_url, news = await get_latest_news_article(session)
         dev_url, devs = await probe_dev_docs(session)
+        uefn_url, uefn = await probe_uefn_whats_new(session)  # NEW
 
-        version = (news.get("version") if news else None) or (devs.get("version") if devs else None)
+        version = (
+            (news.get("version") if news else None) or
+            (devs.get("version") if devs else None) or
+            (uefn.get("version") if uefn else None)  # NEW
+        )
 
         maint_utc = await epic_status_maintenance_time(session)
-        published_iso = (news.get("published") if news else None) or (devs.get("published") if devs else None)
+        published_iso = (
+            (news.get("published") if news else None) or
+            (devs.get("published") if devs else None) or
+            (uefn.get("published") if uefn else None)  # NEW
+        )
         time_pt = to_pacific_display(maint_utc or published_iso)
 
-        article = news or devs
+        article = news or devs or uefn  # NEW
         lines = select_top_sections(article, max_sections=3, max_items_per=3) if article else ["*(no details available)*"]
 
         size_field = None
@@ -204,32 +236,30 @@ async def main():
         links = []
         if news_url: links.append(f"[Full notes (News)]({news_url})")
         if dev_url:  links.append(f"[Dev release notes]({dev_url})")
+        if uefn_url: links.append(f"[UEFN What's New]({uefn_url})")  # NEW
         links.append("[Epic Status](https://status.epicgames.com/)")
 
         # --- Posting logic ---
         if not version and not forced:
             maint_utc = await epic_status_maintenance_time(session)
-            reason = None
             if maint_utc:
                 reason = "Downtime detected via Epic Status — patch notes not yet available."
                 time_pt = to_pacific_display(maint_utc)
             else:
                 reason = "State mismatch detected — couldn’t scrape a version from Epic sources."
                 time_pt = to_pacific_display(None)
-        
+
             # Try sizes even in unknown case
             size_field = None
             if ENABLE_CROWDSIZE:
                 size_field = await crowdsourced_sizes(session)
-        
+
             lines = [f"*({reason})*"]
             links = ["[Epic Status](https://status.epicgames.com/)"]
-        
+
             payload = build_embed("(unknown)", time_pt, lines, links, size_field, forced)
-        
-            # Also send plain content so something is always visible
             wire = {"content": "Fortnite update notifier — unknown version", **payload}
-        
+
             async with session.post(DISCORD_WEBHOOK, json=wire, timeout=ClientTimeout(total=20)) as r:
                 r.raise_for_status()
             # Save placeholder to avoid spamming
@@ -237,12 +267,15 @@ async def main():
             save_state(state)
             return
 
-        # Version found
+        # Version found (from News, Dev Docs, or UEFN)
         if not forced and last_version == version:
             return
 
         payload = build_embed(version, time_pt, lines, links, size_field, forced)
-        async with session.post(DISCORD_WEBHOOK, json=payload, timeout=ClientTimeout(total=20)) as r:
+        # Also send simple content so something is visible even if embeds are restricted
+        wire = {"content": "Fortnite update notifier", **payload}
+
+        async with session.post(DISCORD_WEBHOOK, json=wire, timeout=ClientTimeout(total=20)) as r:
             r.raise_for_status()
 
         if not forced and version:
@@ -251,3 +284,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
