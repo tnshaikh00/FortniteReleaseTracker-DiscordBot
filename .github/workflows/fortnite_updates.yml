@@ -29,7 +29,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           STATE_PATH: state/fortnite_state.json
-          ENABLE_CROWDSIZE: "false"   # set to "true" if you want Reddit size range
+          ENABLE_CROWDSIZE: "true"   # set to "true" if you want Reddit size range
         run: |
           python scripts/fortnite_update_notifier.py
 
