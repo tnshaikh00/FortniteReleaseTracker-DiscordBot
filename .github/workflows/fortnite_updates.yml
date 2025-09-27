@@ -1,14 +1,5 @@
 name: Fortnite Updates to Discord
 
-on:
-  schedule:
-    - cron: "*/15 * * * *"   # every 15 minutes
-  workflow_dispatch:
-    inputs:
-      force_send:
-        description: "Force a send even if version didn't change"
-        required: false
-        default: "false"
 
 permissions:
   contents: write
